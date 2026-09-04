@@ -1,0 +1,150 @@
+1. Add a haversine distance helper (put this near the top of the file, outside the component):
+
+javascript
+// Returns distance in miles between two lat/lng points
+function haversineMiles(
+  lat1: number, lon1: number,
+  lat2: number, lon2: number
+): number {
+  const R = 3958.8; // Earth radius in miles
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Noise-filtering thresholds
+const MIN_ACCURACY_METERS = 25;   // discard readings worse than this
+const MIN_SEGMENT_MILES = 0.02;   // ignore GPS jitter smaller than ~100 ft
+const MIN_SPEED_MPH = 2;          // below this, assume it's noise, not travel
+
+2. Add refs to accumulate distance and track the watcher (inside the component, alongside your existing useState lines):
+
+javascript
+const distanceRef = useRef(0);
+const lastPointRef = useRef<{ lat: number; lon: number; time: number } | null>(null);
+const watchSubRef = useRef<Location.LocationSubscription | null>(null);
+
+You'll need useRef imported from React if it isn't already.
+
+3. Replace handleToggle with this:
+
+javascript
+const handleToggle = async () => {
+  if (Platform.OS === 'web') { toggleTracking(); return; }
+
+  if (!isTracking) {
+    // ── Start tracking ──
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setLocError('Location permission required for drive tracking.');
+      return;
+    }
+    setLocError('');
+
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const [geo] = await Location.reverseGeocodeAsync({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      });
+      setTrackStartAddr(geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location');
+
+      // Reset accumulator and seed the first point
+      distanceRef.current = 0;
+      lastPointRef.current = {
+        lat: loc.coords.latitude,
+        lon: loc.coords.longitude,
+        time: Date.now(),
+      };
+    } catch {
+      setTrackStartAddr('Current Location');
+    }
+
+    // Start continuous watching
+    watchSubRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 5000,   // check every 5s
+        distanceInterval: 10, // or every 10m, whichever comes first
+      },
+      (loc) => {
+        const { latitude, longitude, accuracy } = loc.coords;
+        const now = Date.now();
+
+        // Discard low-confidence readings
+        if (accuracy != null && accuracy > MIN_ACCURACY_METERS) return;
+
+        const prev = lastPointRef.current;
+        if (!prev) {
+          lastPointRef.current = { lat: latitude, lon: longitude, time: now };
+          return;
+        }
+
+        const segmentMiles = haversineMiles(prev.lat, prev.lon, latitude, longitude);
+        const elapsedHours = (now - prev.time) / 1000 / 3600;
+        const speedMph = elapsedHours > 0 ? segmentMiles / elapsedHours : 0;
+
+        // Only count it if it's a real segment AND moving fast enough to be travel
+        if (segmentMiles >= MIN_SEGMENT_MILES && speedMph >= MIN_SPEED_MPH) {
+          distanceRef.current += segmentMiles;
+        }
+
+        lastPointRef.current = { lat: latitude, lon: longitude, time: now };
+      }
+    );
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    toggleTracking();
+  } else {
+    // ── Stop tracking ──
+    if (watchSubRef.current) {
+      watchSubRef.current.remove();
+      watchSubRef.current = null;
+    }
+
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const [geo] = await Location.reverseGeocodeAsync({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      });
+      const endAddr = geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location';
+      const now = new Date();
+
+      addDrive({
+        date: now.toISOString().split('T')[0],
+        startAddress: trackStartAddr || 'Start Location',
+        endAddress: endAddr,
+        miles: Math.round(distanceRef.current * 10) / 10,
+        category: 'unclassified',
+        startTime: 'earlier',
+        endTime: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      });
+    } catch {
+      /* ignore */
+    }
+
+    distanceRef.current = 0;
+    lastPointRef.current = null;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    toggleTracking();
+    setTrackStartAddr('');
+  }
+};
+
+4. Add a cleanup effect so the watcher doesn't leak if the user navigates away mid-track:
+
+javascript
+useEffect(() => {
+  return () => {
+    if (watchSubRef.current) {
+      watchSubRef.current.remove();
+    }
+  };
+}, []);

@@ -1,0 +1,86 @@
+1. Import and use the hook:
+
+javascript
+import { useEbaySync } from '@/hooks/useEbaySync';
+javascript
+// Inside TaxHubScreen component, alongside your existing useApp() call:
+const { taxHub, updateTaxHub, metrics, transactions, syncedYears, isYearSyncable } = useApp();
+const { sync, syncing, syncError } = useEbaySync();
+const [syncingYear, setSyncingYear] = useState<number | null>(null);
+
+2. Replace the year pills block with this:
+
+javascript
+<View style={styles.yearPills}>
+  {TAX_YEARS.map((y) => {
+    const synced = syncedYears.includes(y);
+    const canSync = isYearSyncable(y);
+    const thisPillSyncing = syncing && syncingYear === y;
+
+    return (
+      <TouchableOpacity
+        key={y}
+        style={[
+          styles.yearPill,
+          {
+            backgroundColor: taxHub.taxYear === y ? colors.teal : colors.muted,
+            borderColor: taxHub.taxYear === y ? colors.teal : colors.border,
+            opacity: synced || thisPillSyncing ? 1 : 0.55,
+          },
+        ]}
+        disabled={thisPillSyncing}
+        onPress={async () => {
+          if (synced) {
+            updateTaxHub({ taxYear: y });
+            return;
+          }
+          if (!canSync) return; // year too far back, do nothing
+
+          setSyncingYear(y);
+          await sync(y);
+          setSyncingYear(null);
+          // sync() calls markYearSynced internally on success —
+          // only switch to this year if it actually synced
+          updateTaxHub({ taxYear: y });
+        }}
+        activeOpacity={0.8}
+      >
+        {thisPillSyncing ? (
+          <ActivityIndicator size="small" color={colors.primaryForeground} />
+        ) : (
+          <>
+            <Text
+              style={[
+                styles.yearPillText,
+                { color: taxHub.taxYear === y ? colors.primaryForeground : colors.mutedForeground },
+              ]}
+            >
+              {y}
+            </Text>
+            {!synced && (
+              <Text
+                style={{
+                  fontSize: 9,
+                  fontFamily: 'Inter_500Medium',
+                  color: taxHub.taxYear === y ? colors.primaryForeground + 'CC' : colors.mutedForeground,
+                  marginTop: 1,
+                }}
+              >
+                {canSync ? 'Tap to sync' : 'Unavailable'}
+              </Text>
+            )}
+          </>
+        )}
+      </TouchableOpacity>
+    );
+  })}
+</View>
+
+3. Show a sync error if one occurs (add this right below the year pills card):
+
+javascript
+{syncError && (
+  <Text style={{ fontSize: 11, color: colors.destructive, marginTop: 6, paddingHorizontal: 4 }}>
+    {syncError}
+  </Text>
+)}

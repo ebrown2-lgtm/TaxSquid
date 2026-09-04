@@ -1,0 +1,40 @@
+The fix — add a sibling branch alongside your SALE handling:
+
+javascript
+} else if (tx.transactionType === "SHIPPING_LABEL") {
+  const shippingAmt = amt(tx.amount); // will be negative — it's an expense
+  transactions.push({
+    externalId: `ebay-shipping-${tx.transactionId}`,
+    date,
+    type: "expense",
+    description: itemTitle
+      ? `Shipping Label · ${itemTitle}`
+      : `eBay Shipping Label · ${tx.orderId ?? tx.transactionId}`,
+    amount: Math.abs(shippingAmt),
+    platform: "eBay",
+  });
+  expenses++;
+}
+
+One more thing worth checking: if you're buying labels through PirateShip, PayPal, or any non-eBay service, they will never show up in this API at all — eBay only sees labels purchased through its own checkout flow. If your Jul 24 / Jul 21 / Jul 8 orders used outside postage, that's a structural limit, not a bug — you'd need to add manual expense entry for those.
+
+Want to paste the rest of the loop (the part after that fee console.log)? I can check whether there's a stray else if further down that's already trying to handle this but matching the wrong string.
+
+I'm using replit. Whats the easiest way to input this code
+
+Identified user's need for direct code input guidance
+Identified user's need for direct code input guidance
+
+The easiest path in Replit:
+
+Open the file where this sync function lives (based on your snippet, probably something like server/ebaySync.ts or similar — look in the file tree for wherever runSync is defined).
+Use Replit's built-in search (Ctrl/Cmd + Shift + F, or the magnifying glass in the sidebar) to search for orderLineItems[li] or "Parsed Fee for Order:" — that'll jump you straight to the block you pasted above, since that console.log line is unique.
+Find the closing brace of the if (tx.transactionType === "SALE") block. It'll look like a } that lines up with where the fee-parsing logic ends (right after that console.log and probably a few more lines pushing fee transactions).
+Paste the new else if (tx.transactionType === "SHIPPING_LABEL") block right after that closing } and before whatever comes next in the loop (likely a closing brace for the whole for (const tx of financeTxs) loop, or another else if).
+Add the debug log line right before the if (tx.transactionType === "SALE") check too, so you can see it in Replit's console when you run a sync.
+
+Fastest way if you don't want to hunt for the exact spot: paste the full function (or just the loop body) back to me here, and I'll return the whole block with the fix already inserted in the right place — then you just select-all and replace that one function in Replit.
+
+Also — since you're using Replit AI to build this, you can literally paste my explanation above (the "Found it" part) as a prompt to Replit AI and say "add this shipping label handling to the transaction loop in [filename]." It'll usually place it correctly since it has full context of the surrounding code that I don't.
+
+Want to be notified when

@@ -1,0 +1,115 @@
+1. Update runSync to accept an explicit year instead of a rolling window:
+
+javascript
+export async function runSync(
+  accessToken: string,
+  year: number
+): Promise<SyncResult> {
+  const now = new Date();
+  const startDate = new Date(year, 0, 1); // Jan 1 of that year
+  const endDate = year === now.getFullYear()
+    ? now                          // current year: sync up to today
+    : new Date(year, 11, 31, 23, 59, 59); // past year: sync full year
+
+  logger.info(
+    { year, start: startDate.toISOString(), end: endDate.toISOString() },
+    "eBay sync: starting year fetch"
+  );
+
+  let fulfillmentOrders: FulfillmentOrder[] = [];
+  try {
+    fulfillmentOrders = await fetchAllFulfillmentOrders(accessToken, startDate, endDate);
+  } catch (err: any) {
+    logger.error({ err: err.message }, "eBay sync: Fulfillment API failed");
+    const empty: SyncResult = {
+      timestamp: new Date().toISOString(),
+      transactions: [],
+      counts: { sales: 0, fees: 0, expenses: 0, total: 0 },
+    };
+    lastResult = empty;
+    return empty;
+  }
+  // ...rest of the function stays the same, just references startDate/endDate as defined above
+
+2. Add syncedYears tracking to AppContext. This persists which years have been synced, alongside your existing AsyncStorage pattern:
+
+javascript
+// In AppContextValue interface:
+syncedYears: number[];
+markYearSynced: (year: number) => void;
+isYearSyncable: (year: number) => boolean;
+javascript
+// In AppProvider, alongside your other useState calls:
+const [syncedYears, setSyncedYears] = useState<number[]>([]);
+
+// In the loading useEffect, alongside the other AsyncStorage.getItem calls:
+const rawSyncedYears = await AsyncStorage.getItem('taxsquid_synced_years');
+setSyncedYears(rawSyncedYears ? JSON.parse(rawSyncedYears) : []);
+
+// New persistence effect:
+useEffect(() => {
+  if (!loaded) return;
+  AsyncStorage.setItem('taxsquid_synced_years', JSON.stringify(syncedYears)).catch(() => {});
+}, [syncedYears, loaded]);
+
+// New callback:
+const markYearSynced = useCallback((year: number) => {
+  setSyncedYears((prev) => (prev.includes(year) ? prev : [...prev, year]));
+}, []);
+
+// Only current year and the immediately preceding year are ever syncable
+const isYearSyncable = useCallback((year: number) => {
+  const currentYear = new Date().getFullYear();
+  return year === currentYear || year === currentYear - 1;
+}, []);
+
+Don't forget to add syncedYears, markYearSynced, and isYearSyncable to the value={{ ... }} object passed into AppContext.Provider.
+
+3. Wherever your "Sync Data Now" trigger lives (probably a settings screen, or wherever runSync currently gets called), call markYearSynced after a successful sync:
+
+javascript
+const result = await runSync(accessToken, year);
+addTransactions(result.transactions);
+markYearSynced(year);
+
+4. Update the Tax Hub year pills so unsynced years are visibly disabled and offer a sync action instead of just showing empty/wrong data:
+
+javascript
+const { taxHub, updateTaxHub, metrics, transactions, syncedYears, isYearSyncable } = useApp();
+
+// In the year pills row:
+{TAX_YEARS.map((y) => {
+  const synced = syncedYears.includes(y);
+  return (
+    <TouchableOpacity
+      key={y}
+      style={[
+        styles.yearPill,
+        {
+          backgroundColor: taxHub.taxYear === y ? colors.teal : colors.muted,
+          borderColor: taxHub.taxYear === y ? colors.teal : colors.border,
+          opacity: synced ? 1 : 0.5,
+        },
+      ]}
+      onPress={() => {
+        if (synced) {
+          updateTaxHub({ taxYear: y });
+        } else if (isYearSyncable(y)) {
+          // Trigger sync flow for this year — navigate to sync screen,
+          // or call your sync function directly if accessToken is available here
+        }
+        // If not syncable (too far back), pill just does nothing — could show a toast
+      }}
+      activeOpacity={0.8}
+    >
+      <Text style={[styles.yearPillText, { color: taxHub.taxYear === y ? colors.primaryForeground : colors.mutedForeground }]}>
+        {y}
+      </Text>
+      {!synced && (
+        <Text style={{ fontSize: 9, color: colors.mutedForeground, marginTop: 1 }}>
+          {isYearSyncable(y) ? 'Tap to sync' : 'Unavailable'}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+})}

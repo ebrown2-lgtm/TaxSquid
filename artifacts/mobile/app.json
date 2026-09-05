@@ -8,7 +8,11 @@
     "scheme": "mobile",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.splack112steam.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {},
     "web": {
@@ -36,6 +40,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b6cec78f-bef5-4b29-aa37-94b70be13cdb"
+      }
+    },
+    "owner": "splack112s-team"
   }
 }

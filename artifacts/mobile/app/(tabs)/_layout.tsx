@@ -100,50 +100,9 @@ function ClassicTabLayout() {
 
 // ── Root tab layout ───────────────────────────────────────────────────────────
 export default function TabLayout() {
-  // Only attempt to use liquid-glass / NativeTabs on iOS.
-  // The require() calls are inside this block so Metro strips them from
-  // Android and web bundles — never let them reach a non-iOS build.
-  if (Platform.OS === 'ios') {
-    const { isLiquidGlassAvailable } = require('expo-glass-effect') as {
-      isLiquidGlassAvailable: () => boolean;
-    };
-
-    if (isLiquidGlassAvailable()) {
-      const { NativeTabs, Icon, Label } = require(
-        'expo-router/unstable-native-tabs'
-      ) as typeof import('expo-router/unstable-native-tabs');
-
-      return (
-        <NativeTabs>
-          <NativeTabs.Trigger name="index">
-            <Icon sf={{ default: 'chart.bar', selected: 'chart.bar.fill' }} />
-            <Label>Dashboard</Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="mileage">
-            <Icon sf={{ default: 'car', selected: 'car.fill' }} />
-            <Label>Mileage</Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="ledger">
-            <Icon
-              sf={{
-                default: 'list.bullet.rectangle',
-                selected: 'list.bullet.rectangle.fill',
-              }}
-            />
-            <Label>Ledger</Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="inventory">
-            <Icon sf={{ default: 'shippingbox', selected: 'shippingbox.fill' }} />
-            <Label>Inventory</Label>
-          </NativeTabs.Trigger>
-          <NativeTabs.Trigger name="taxhub">
-            <Icon sf={{ default: 'doc.text', selected: 'doc.text.fill' }} />
-            <Label>Tax Hub</Label>
-          </NativeTabs.Trigger>
-        </NativeTabs>
-      );
-    }
-  }
-
+  // NativeTabs (Liquid Glass) is currently disabled — expo-router's
+  // unstable-native-tabs has an open upstream bug where SF Symbol icons
+  // render blank on dev-client builds (github.com/expo/expo/issues/41048).
+  // Using the stable Feather-icon tab bar until that's resolved.
   return <ClassicTabLayout />;
 }

@@ -17,6 +17,8 @@ import { supabase } from "@/utils/supabase";
 import { SquidIcon } from "@/components/SquidIcon";
 import { signInWithGoogle } from "@/utils/googleAuth";
 import { signInWithFacebook } from '@/utils/facebookAuth';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { signInWithApple } from '@/utils/appleAuth';
 import { Feather } from "@expo/vector-icons";
 
 export default function SignInScreen() {
@@ -39,6 +41,16 @@ export default function SignInScreen() {
     if (error) setError(error);
   };
 
+  const [appleLoading, setAppleLoading] = useState(false);
+
+  const handleAppleSignIn = async () => {
+    setError('');
+    setAppleLoading(true);
+    const { error } = await signInWithApple();
+    setAppleLoading(false);
+    if (error) setError(error);
+  };
+  
   const handleFacebookSignIn = async () => {
     setError('');
     setFacebookLoading(true);
@@ -187,6 +199,16 @@ export default function SignInScreen() {
             </>
           )}
         </TouchableOpacity>
+        
+        {Platform.OS === 'ios' && (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+            cornerRadius={14}
+            style={{ height: 52, width: '100%', marginTop: 10 }}
+            onPress={handleAppleSignIn}
+          />
+        )}
         
         <TouchableOpacity
           style={[

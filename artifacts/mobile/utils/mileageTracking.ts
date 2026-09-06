@@ -1,13 +1,9 @@
 import * as Location from 'expo-location';
-import * as Haptics from 'expo-haptics';
-import {
-  startBackgroundTracking,
-  stopBackgroundTracking,
-  getTrackingState,
-} from '@/utils/mileageTracking';
+import * as TaskManager from 'expo-task-manager';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const LOCATION_TASK_NAME = 'taxsquid-background-location-task';
-
 const STORAGE_KEY = 'taxsquid_mileage_tracking_state';
 
 // ── Tunable thresholds ───────────────────────────────────────────────────────
@@ -57,67 +53,69 @@ export async function setTrackingState(state: TrackingState): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3958.8;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // ── Background task — invoked directly by iOS/Android, independent of the app UI ──
-TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
-  if (error) {
-    console.warn('Mileage background task error:', error.message);
-    return;
-  }
-  const { locations } = (data as { locations: Location.LocationObject[] }) ?? { locations: [] };
-  if (!locations?.length) return;
-
-  const state = await getTrackingState();
-  if (!state.isTracking) return;
-
-  for (const loc of locations) {
-    const { latitude, longitude, accuracy } = loc.coords;
-    const now = loc.timestamp ?? Date.now();
-
-    if (accuracy != null && accuracy > MIN_ACCURACY_METERS) continue;
-
-    const prev = state.lastPoint;
-    if (!prev) {
+// expo-task-manager is native-only; there's no web equivalent for background
+// GPS tracking, so this registration is skipped on web entirely.
+if (Platform.OS !== 'web') {
+  TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+    if (error) {
+      console.warn('Mileage background task error:', error.message);
+      return;
+    }
+    const { locations } = (data as { locations: Location.LocationObject[] }) ?? { locations: [] };
+    if (!locations?.length) return;
+    const state = await getTrackingState();
+    if (!state.isTracking) return;
+    for (const loc of locations) {
+      const { latitude, longitude, accuracy } = loc.coords;
+      const now = loc.timestamp ?? Date.now();
+      if (accuracy != null && accuracy > MIN_ACCURACY_METERS) continue;
+      const prev = state.lastPoint;
+      if (!prev) {
+        state.lastPoint = { lat: latitude, lon: longitude, time: now };
+        state.lastMovementTime = now;
+        continue;
+      }
+      const segmentMiles = haversineMiles(prev.lat, prev.lon, latitude, longitude);
+      const elapsedHours = (now - prev.time) / 1000 / 3600;
+      const speedMph = elapsedHours > 0 ? segmentMiles / elapsedHours : 0;
+      if (segmentMiles >= MIN_SEGMENT_MILES && speedMph >= MIN_SPEED_MPH) {
+        state.accumulatedMiles += segmentMiles;
+        state.lastMovementTime = now;
+      }
       state.lastPoint = { lat: latitude, lon: longitude, time: now };
-      state.lastMovementTime = now;
-      continue;
+
+      const stoppedFor = now - state.lastMovementTime;
+      if (stoppedFor >= STOP_SEGMENT_MS && state.accumulatedMiles >= MIN_DRIVE_MILES) {
+        state.pendingDrive = {
+          startAddress: state.startAddress,
+          endLat: prev.lat,
+          endLon: prev.lon,
+          miles: Math.round(state.accumulatedMiles * 10) / 10,
+          startTime: state.startTime,
+          endTime: state.lastMovementTime,
+        };
+        state.accumulatedMiles = 0;
+        state.startAddress = '';
+        state.startTime = now;
+      } else if (stoppedFor >= STOP_SEGMENT_MS && state.accumulatedMiles < MIN_DRIVE_MILES) {
+        state.accumulatedMiles = 0;
+        state.startTime = now;
+      }
     }
-
-    const segmentMiles = haversineMiles(prev.lat, prev.lon, latitude, longitude);
-    const elapsedHours = (now - prev.time) / 1000 / 3600;
-    const speedMph = elapsedHours > 0 ? segmentMiles / elapsedHours : 0;
-
-    if (segmentMiles >= MIN_SEGMENT_MILES && speedMph >= MIN_SPEED_MPH) {
-      state.accumulatedMiles += segmentMiles;
-      state.lastMovementTime = now;
-    }
-    state.lastPoint = { lat: latitude, lon: longitude, time: now };
-
-    // ── Auto-segmentation: stopped for 2+ minutes → close out this drive ──
-    const stoppedFor = now - state.lastMovementTime;
-    if (stoppedFor >= STOP_SEGMENT_MS && state.accumulatedMiles >= MIN_DRIVE_MILES) {
-      state.pendingDrive = {
-        startAddress: state.startAddress,
-        endLat: prev.lat,
-        endLon: prev.lon,
-        miles: Math.round(state.accumulatedMiles * 10) / 10,
-        startTime: state.startTime,
-        endTime: state.lastMovementTime,
-      };
-      // Start a fresh segment in case the device keeps moving later (e.g. a longer stop
-      // mid-route) — the app picks up pendingDrive and saves it as a completed drive;
-      // if movement resumes, tracking continues seamlessly as a new segment.
-      state.accumulatedMiles = 0;
-      state.startAddress = ''; // filled in lazily on next resolved point if needed
-      state.startTime = now;
-    } else if (stoppedFor >= STOP_SEGMENT_MS && state.accumulatedMiles < MIN_DRIVE_MILES) {
-      // Stopped, but never moved enough to count as a real drive — just reset quietly
-      state.accumulatedMiles = 0;
-      state.startTime = now;
-    }
-  }
-
-  await setTrackingState(state);
-});
+    await setTrackingState(state);
+  });
+}
 
 // ── Start/stop background tracking ──────────────────────────────────────────
 export async function startBackgroundTracking(startAddress: string): Promise<void> {

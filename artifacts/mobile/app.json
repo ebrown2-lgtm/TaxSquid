@@ -54,6 +54,7 @@
         }
       ],
       "expo-task-manager",
+      "expo-apple-authentication",
       "expo-font",
       "expo-web-browser",
       "expo-sharing"

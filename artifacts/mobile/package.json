@@ -57,6 +57,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
+    "expo-apple-authentication": "~57.0.1",
+    "expo-crypto": "~57.0.2",
     "expo-dev-client": "~57.0.18",
     "expo-document-picker": "^57.0.1",
     "expo-file-system": "^57.0.6",

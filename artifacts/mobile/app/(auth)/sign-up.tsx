@@ -16,6 +16,8 @@ import { useColors } from '@/hooks/useColors';
 import { supabase } from '@/utils/supabase';
 import { SquidIcon } from '@/components/SquidIcon';
 import { signInWithFacebook } from '@/utils/facebookAuth';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { signInWithApple } from '@/utils/appleAuth';
 
 export default function SignUpScreen() {
   const colors = useColors();
@@ -35,6 +37,16 @@ export default function SignUpScreen() {
     setFacebookLoading(true);
     const { error } = await signInWithFacebook();
     setFacebookLoading(false);
+    if (error) setError(error);
+  };
+  
+  const [appleLoading, setAppleLoading] = useState(false);
+
+  const handleAppleSignIn = async () => {
+    setError('');
+    setAppleLoading(true);
+    const { error } = await signInWithApple();
+    setAppleLoading(false);
     if (error) setError(error);
   };
   
@@ -173,8 +185,16 @@ export default function SignUpScreen() {
             <Text style={[styles.submitText, { color: colors.primaryForeground }]}>Sign Up</Text>
           )}
         </TouchableOpacity>
-
-        <TouchableOpacity
+    {Platform.OS === 'ios' && (
+      <AppleAuthentication.AppleAuthenticationButton
+        buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+        cornerRadius={14}
+        style={{ height: 52, width: '100%', marginTop: 10 }}
+        onPress={handleAppleSignIn}
+      />
+    )}
+    <TouchableOpacity
           style={styles.switchLink}
           onPress={() => router.push('/(auth)/sign-in')}
           activeOpacity={0.7}

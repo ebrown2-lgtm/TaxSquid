@@ -11,10 +11,21 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.splack112steam.mobile",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["location"],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "TaxSquid tracks your drives in the background so business mileage is recorded automatically, even when the app isn't open.",
+        "NSLocationWhenInUseUsageDescription": "TaxSquid uses your location to record the start and end points of your drives for mileage tracking."
       }
     },
-    "android": {},
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -33,6 +44,16 @@
           "backgroundColor": "#0D1117"
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "TaxSquid tracks your drives in the background so business mileage is recorded automatically, even when the app isn't open.",
+          "locationWhenInUsePermission": "TaxSquid uses your location to record the start and end points of your drives for mileage tracking.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-task-manager",
       "expo-font",
       "expo-web-browser",
       "expo-sharing"

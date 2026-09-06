@@ -17,28 +17,13 @@ import { useApp, Drive, DriveCategory } from '@/context/AppContext';
 import { DriveCard } from '@/components/DriveCard';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
-
-// Returns distance in miles between two lat/lng points
-function haversineMiles(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number
-): number {
-  const R = 3958.8; // Earth radius in miles
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
+import {
+  startBackgroundTracking,
+  stopBackgroundTracking,
+  getTrackingState,
+} from '@/utils/mileageTracking';
 
 // Noise-filtering thresholds
-const MIN_ACCURACY_METERS = 25;   // discard readings worse than this
-const MIN_SEGMENT_MILES = 0.02;   // ignore GPS jitter smaller than ~100 ft
-const MIN_SPEED_MPH = 2;          // below this, assume it's noise, not travel
 
 function fmt(n: number) {
   return new Intl.NumberFormat('en-US', {
@@ -313,8 +298,10 @@ export default function MileageScreen() {
   const { drives, isTracking, toggleTracking, classifyDrive, deleteDrive, addDrive, mileageRate } = useApp();
   const [locError, setLocError] = useState('');
   const [trackStartAddr, setTrackStartAddr] = useState('');
+  const [liveMiles, setLiveMiles] = useState(0);
   const [actionDrive, setActionDrive] = useState<Drive | null>(null);
-  const [scrollLocked, setScrollLocked] = useState(false); // prevent scroll while swiping
+  const [scrollLocked, setScrollLocked] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const distanceRef = useRef(0);
   const lastPointRef = useRef<{ lat: number; lon: number; time: number } | null>(null);
@@ -332,113 +319,117 @@ export default function MileageScreen() {
 
     if (!isTracking) {
       // ── Start tracking ──
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      const fg = await Location.requestForegroundPermissionsAsync();
+      if (fg.status !== 'granted') {
         setLocError('Location permission required for drive tracking.');
+        return;
+      }
+      const bg = await Location.requestBackgroundPermissionsAsync();
+      if (bg.status !== 'granted') {
+        setLocError('"Always Allow" location is required so drives are tracked even when your screen is locked.');
         return;
       }
       setLocError('');
 
+      let startAddr = 'Current Location';
       try {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         const [geo] = await Location.reverseGeocodeAsync({
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
         });
-        setTrackStartAddr(geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location');
-
-        // Reset accumulator and seed the first point
-        distanceRef.current = 0;
-        lastPointRef.current = {
-          lat: loc.coords.latitude,
-          lon: loc.coords.longitude,
-          time: Date.now(),
-        };
+        startAddr = geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location';
       } catch {
-        setTrackStartAddr('Current Location');
+        /* fall back to default */
       }
 
-      // Start continuous watching
-      watchSubRef.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 5000,   // check every 5s
-          distanceInterval: 10, // or every 10m, whichever comes first
-        },
-        (loc) => {
-          const { latitude, longitude, accuracy } = loc.coords;
-          const now = Date.now();
-
-          // Discard low-confidence readings
-          if (accuracy != null && accuracy > MIN_ACCURACY_METERS) return;
-
-          const prev = lastPointRef.current;
-          if (!prev) {
-            lastPointRef.current = { lat: latitude, lon: longitude, time: now };
-            return;
-          }
-
-          const segmentMiles = haversineMiles(prev.lat, prev.lon, latitude, longitude);
-          const elapsedHours = (now - prev.time) / 1000 / 3600;
-          const speedMph = elapsedHours > 0 ? segmentMiles / elapsedHours : 0;
-
-          // Only count it if it's a real segment AND moving fast enough to be travel
-          if (segmentMiles >= MIN_SEGMENT_MILES && speedMph >= MIN_SPEED_MPH) {
-            distanceRef.current += segmentMiles;
-          }
-
-          lastPointRef.current = { lat: latitude, lon: longitude, time: now };
-        }
-      );
+      setTrackStartAddr(startAddr);
+      setLiveMiles(0);
+      await startBackgroundTracking(startAddr);
 
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       toggleTracking();
     } else {
       // ── Stop tracking ──
-      if (watchSubRef.current) {
-        watchSubRef.current.remove();
-        watchSubRef.current = null;
+      const finalState = await stopBackgroundTracking();
+
+      if (finalState.accumulatedMiles >= 0.1) {
+        try {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const [geo] = await Location.reverseGeocodeAsync({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+          const endAddr = geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location';
+          const now = new Date();
+
+          // Same start/end point guard — skip logging a drive that never actually moved
+          if (endAddr !== finalState.startAddress || finalState.accumulatedMiles >= 0.1) {
+            addDrive({
+              date: now.toISOString().split('T')[0],
+              startAddress: finalState.startAddress || 'Start Location',
+              endAddress: endAddr,
+              miles: Math.round(finalState.accumulatedMiles * 10) / 10,
+              category: 'unclassified',
+              startTime: 'earlier',
+              endTime: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            });
+          }
+        } catch {
+          /* ignore */
+        }
       }
 
-      try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const [geo] = await Location.reverseGeocodeAsync({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
-        const endAddr = geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location';
-        const now = new Date();
-
-        addDrive({
-          date: now.toISOString().split('T')[0],
-          startAddress: trackStartAddr || 'Start Location',
-          endAddress: endAddr,
-          miles: Math.round(distanceRef.current * 10) / 10,
-          category: 'unclassified',
-          startTime: 'earlier',
-          endTime: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-        });
-      } catch {
-        /* ignore */
-      }
-
-      distanceRef.current = 0;
-      lastPointRef.current = null;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       toggleTracking();
       setTrackStartAddr('');
+      setLiveMiles(0);
     }
   };
 
   // Cleanup: remove watcher if user navigates away mid-track
   useEffect(() => {
-    return () => {
-      if (watchSubRef.current) {
-        watchSubRef.current.remove();
-      }
-    };
-  }, []);
+    if (!isTracking) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+    pollRef.current = setInterval(async () => {
+      const state = await getTrackingState();
+      setLiveMiles(state.accumulatedMiles);
 
+      // A background stop-detection auto-closed a segment while we were tracking —
+      // save it as a completed drive and keep the tracker running for the next one.
+      if (state.pendingDrive) {
+        const p = state.pendingDrive;
+        let endAddr = 'Current Location';
+        try {
+          const [geo] = await Location.reverseGeocodeAsync({ latitude: p.endLat, longitude: p.endLon });
+          endAddr = geo ? [geo.name, geo.city].filter(Boolean).join(', ') : 'Current Location';
+        } catch {
+          /* ignore */
+        }
+        addDrive({
+          date: new Date(p.startTime).toISOString().split('T')[0],
+          startAddress: p.startAddress || 'Start Location',
+          endAddress: endAddr,
+          miles: p.miles,
+          category: 'unclassified',
+          startTime: new Date(p.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          endTime: new Date(p.endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        });
+        // Clear pendingDrive so we don't save it twice
+        const cleared = await getTrackingState();
+        await import('@/utils/mileageTracking').then(({ setTrackingState }) =>
+          setTrackingState({ ...cleared, pendingDrive: null })
+        );
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    }, 4000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [isTracking]);
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -478,7 +469,7 @@ export default function MileageScreen() {
             <View style={[styles.activeBar, { backgroundColor: colors.teal + '15', borderTopColor: colors.teal + '33' }]}>
               <View style={[styles.pulseDot, { backgroundColor: colors.teal }]} />
               <Text style={[styles.activeText, { color: colors.teal }]}>
-                Recording drive from {trackStartAddr || 'current location'}
+                Recording from {trackStartAddr || 'current location'} · {liveMiles.toFixed(1)} mi
               </Text>
             </View>
           )}

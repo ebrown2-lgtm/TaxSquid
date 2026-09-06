@@ -65,6 +65,7 @@
     "expo-print": "^57.0.1",
     "expo-sharing": "^57.0.18",
     "expo-task-manager": "~57.0.16",
+    "react-native-purchases": "^10.9.0",
     "react-native-url-polyfill": "^4.0.0"
   }
 }

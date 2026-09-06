@@ -5,6 +5,14 @@ import React, {
   useEffect,
   useState,
 } from 'react';
+import Purchases, { CustomerInfo } from 'react-native-purchases';
+import {
+  configureRevenueCat,
+  attachRevenueCatUser,
+  detachRevenueCatUser,
+  hasPremiumEntitlement,
+} from '@/utils/revenueCat';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { fetchOrCreateSettings, updateSettings } from '@/utils/settingsService';
@@ -254,6 +262,7 @@ interface AppContextValue {
   session: Session | null;
   authLoading: boolean;
   signOut: () => Promise<void>;
+  hasPremium: boolean;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -393,6 +402,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    configureRevenueCat();
+  }, []);
+  
+  useEffect(() => {
+    if (session?.user?.id) {
+      attachRevenueCatUser(session.user.id);
+    } else {
+      detachRevenueCatUser();
+      setHasPremium(false);
+    }
+
+    const listener = (info: CustomerInfo) => {
+      setHasPremium(hasPremiumEntitlement(info));
+    };
+    Purchases.addCustomerInfoUpdateListener(listener);
+
+    // Also check current status immediately (the listener only fires on change)
+    Purchases.getCustomerInfo()
+      .then((info) => setHasPremium(hasPremiumEntitlement(info)))
+      .catch(() => {});
+
+    return () => {
+      Purchases.removeCustomerInfoUpdateListener(listener);
+    };
+  }, [session?.user?.id]);
+  
+  useEffect(() => {
     (async () => {
       try {
         const rawTracking = await AsyncStorage.getItem('taxsquid_tracking');
@@ -404,6 +440,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [hasPremium, setHasPremium] = useState(false);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -533,6 +570,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    await detachRevenueCatUser();
     await supabase.auth.signOut();
   }, []);
   
@@ -701,6 +739,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         session,
           authLoading,
           signOut,
+        hasPremium,
       }}
     >
       {children}

@@ -95,7 +95,7 @@ export default function SignInScreen() {
       </View>
 
       <Text style={[styles.title, { color: colors.foreground }]}>
-        Welcome back
+        Welcome back!
       </Text>
       <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
         Sign in to access your tax data
@@ -205,7 +205,7 @@ export default function SignInScreen() {
             buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
             buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
             cornerRadius={14}
-            style={{ height: 52, width: '100%', marginTop: 10 }}
+            style={{ height: 45, width: '100%', marginTop: 0 }}
             onPress={handleAppleSignIn}
           />
         )}
